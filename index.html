@@ -1,0 +1,1213 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gesture Xmas Tree — Three.js + MediaPipe Hands</title>
+  <style>
+    :root{
+      --bg:#030509;
+      --green:#067554;   /* 哑光绿 */
+      --gold:#FFD36A;    /* 金属金 */
+      --red:#b11226;     /* 圣诞红 */
+      --ui: rgba(10,14,20,.55);
+      --stroke: rgba(255,255,255,.12);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.7);
+    }
+    html,body{height:100%;margin:0;background:radial-gradient(1200px 800px at 60% 20%, rgba(212,175,55,.10), transparent 60%),
+                               radial-gradient(900px 700px at 30% 70%, rgba(177,18,38,.10), transparent 55%),
+                               linear-gradient(180deg, #020308, #040713 55%, #020308);
+              overflow:hidden;font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;}
+    #app{position:fixed;inset:0;display:block;}
+    canvas{display:block; width:100%; height:100%;}
+    /* video 隐藏但保留 */
+    #video{position:fixed; right:16px; bottom:16px; width:200px; aspect-ratio: 4/3; opacity:.18; border-radius:14px;
+           border:1px solid var(--stroke); background:#000; transform: scaleX(-1); display:none;}
+    /* UI */
+    .hud{
+      position:fixed; left:16px; top:16px; width:min(420px, calc(100vw - 32px));
+      background: var(--ui); border:1px solid var(--stroke); border-radius:18px; padding:14px 14px 12px;
+      backdrop-filter: blur(10px); color:var(--text); box-shadow: 0 18px 60px rgba(0,0,0,.35);
+    }
+    .title{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
+    .badge{width:10px;height:10px;border-radius:50%; background: radial-gradient(circle at 30% 30%, #fff, var(--gold) 55%, rgba(0,0,0,.2));
+           box-shadow: 0 0 16px rgba(212,175,55,.55);}
+    .title h1{font-size:14px; margin:0; letter-spacing:.2px;}
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+    .btn, label.btn{
+      cursor:pointer; user-select:none;
+      padding:8px 10px; border-radius:12px; border:1px solid var(--stroke);
+      background: rgba(255,255,255,.06); color:var(--text); font-size:12px;
+      display:inline-flex; gap:8px; align-items:center;
+      transition: transform .08s ease, background .2s ease, border-color .2s ease;
+    }
+    .btn:hover{background: rgba(255,255,255,.10);}
+    .btn:active{transform: translateY(1px) scale(.99);}
+    .hint{margin-top:10px; font-size:12px; color:var(--muted); line-height:1.35;}
+    .pill{
+      display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px;
+      border:1px solid var(--stroke); background: rgba(255,255,255,.05); font-size:11px; margin-top:8px;
+    }
+    .dot{width:7px;height:7px;border-radius:50%;}
+    .dot.green{background: rgba(11,61,46,.95); box-shadow:0 0 14px rgba(11,61,46,.55);}
+    .dot.gold{background: rgba(212,175,55,.95); box-shadow:0 0 14px rgba(212,175,55,.55);}
+    .dot.red{background: rgba(177,18,38,.95); box-shadow:0 0 14px rgba(177,18,38,.55);}
+    input[type=file]{display:none;}
+    .status{
+      margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+      font-size:12px; color: var(--muted);
+    }
+    .kv{padding:6px 8px; border-radius:12px; border:1px solid var(--stroke); background: rgba(255,255,255,.04);}
+    .rightNote{
+      position:fixed; right:16px; top:16px;
+      background: rgba(10,14,20,.35); border:1px solid rgba(255,255,255,.10);
+      padding:10px 12px; border-radius:16px; color:rgba(255,255,255,.8); font-size:12px;
+      backdrop-filter: blur(8px);
+    }
+    .rightNote b{color:rgba(255,255,255,.95);}
+  
+    /* HUD slide-in sidebar */
+    .hudWrap{
+      position:fixed;
+      left:0;
+      top:16px;
+      z-index:20;
+      pointer-events:auto;
+    }
+    .hudPeek{
+      position:absolute;
+      left:0;
+      top:14px;
+      width:18px;
+      height:72px;
+      border-radius:0 14px 14px 0;
+      border:1px solid var(--stroke);
+      border-left:none;
+      background: rgba(255,255,255,.08);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 18px 60px rgba(0,0,0,.25);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color: rgba(255,255,255,.85);
+      font-size:12px;
+      user-select:none;
+    }
+    .hud{
+      position:relative; /* was fixed */
+      left:0; top:0;     /* neutralize old fixed offsets */
+      transform: translateX(calc(-100% + 18px));
+      transition: transform .22s ease;
+      will-change: transform;
+    }
+    .hudWrap:hover .hud,
+    .hudWrap:focus-within .hud{
+      transform: translateX(16px);
+    }
+    /* keep it usable on small screens: show by default */
+    @media (max-width: 640px){
+      .hud{ transform: translateX(16px); }
+      .hudPeek{ display:none; }
+    }
+
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <video id="video" playsinline></video>
+
+  <audio id="bgm" loop preload="auto">
+    <source src="./bgm.mp3" type="audio/mpeg">
+  </audio>
+
+  <div class="hudWrap" aria-label="Controls panel">
+
+
+    <div class="hudPeek" title="Hover to open">☰</div>
+
+
+    <div class="hud">
+    <div class="title">
+      <div class="badge"></div>
+      <h1>手势控制 3D 粒子 + 照片云 圣诞树（Three.js + MediaPipe Hands）</h1>
+    </div>
+
+    <div class="row">
+      <label class="btn">
+        📷 上传照片（多选）
+        <input id="photoInput" type="file" accept="image/*" multiple />
+      </label>
+      <button class="btn" id="toggleCam">🎥 启用摄像头</button>
+      <button class="btn" id="reset">🔄 重置状态</button>
+      <button class="btn" id="togglePreview">🪞 显示预览视频</button>
+    </div>
+
+    <div class="hint">
+      <div class="pill"><span class="dot green"></span>哑光绿</div>
+      <div class="pill"><span class="dot gold"></span>金属金</div>
+      <div class="pill"><span class="dot red"></span>圣诞红</div>
+      <div style="margin-top:8px">
+        手势：<b>握拳</b>→合拢态；<b>张开五指</b>→散开态；<b>手在画面移动/旋转</b>→旋转视角；<b>拇指+食指捏合</b>抓照片→照片放大态。
+      </div>
+    </div>
+
+    <div class="status">
+      <div class="kv">State: <span id="stateText">CONE</span></div>
+      <div class="kv">Hand: <span id="handText">OFF</span></div>
+      <div class="kv">Photos: <span id="photoText">0</span></div>
+    </div>
+  </div>
+
+
+  </div>
+
+
+
+  <div class="rightNote">
+    <div><b>提示</b>：首次启用摄像头会弹权限框。</div>
+    <div>若识别不稳，手离镜头稍远、光线更均匀会更好。</div>
+  </div>
+
+  <!-- Import map for Three.js (module) -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <!-- MediaPipe Hands (non-module UMD) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+    import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+    import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+    import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+
+    // ---------------------------
+    // UI refs
+    // ---------------------------
+    const app = document.getElementById("app");
+    const video = document.getElementById("video");
+    const bgm = document.getElementById("bgm");
+    const photoInput = document.getElementById("photoInput");
+    const toggleCamBtn = document.getElementById("toggleCam");
+    const togglePreviewBtn = document.getElementById("togglePreview");
+    const resetBtn = document.getElementById("reset");
+    const stateText = document.getElementById("stateText");
+    const handText = document.getElementById("handText");
+    const photoText = document.getElementById("photoText");
+
+    // ---------------------------
+    // Theme colors
+    // ---------------------------
+    const C_GREEN = new THREE.Color("#0B1F16");
+    const C_GOLD  = new THREE.Color("#FFD36A");
+    const C_AMBER = new THREE.Color("#FFB703");
+    const C_RED   = new THREE.Color("#FFB703");
+    const C_BG    = new THREE.Color("#030509");
+
+    // ---------------------------
+    // Scene / Camera / Renderer
+    // ---------------------------
+    const scene = new THREE.Scene();
+    scene.background = C_BG;
+    scene.fog = new THREE.FogExp2(C_BG.getHex(), 0.045);
+
+    const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 200);
+    camera.position.set(0, 4.2, 14);
+
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.6;//1.25
+    app.appendChild(renderer.domElement);
+
+    // Cinematic lighting (subtle, bloom does the magic)
+    const hemi = new THREE.HemisphereLight(new THREE.Color("#e8f1ff"), new THREE.Color("#10151f"), 0.85);
+    scene.add(hemi);
+
+    const key = new THREE.DirectionalLight(new THREE.Color("#fff7e1"), 1.0);
+    key.position.set(6, 10, 6);
+    key.castShadow = false;
+    scene.add(key);
+
+    const rim = new THREE.DirectionalLight(new THREE.Color("#ffd18c"), 0.55);
+    rim.position.set(-8, 6, -10);
+    scene.add(rim);
+
+    // --- Selective Bloom layers ---
+    const ENTIRE_SCENE = 0;
+    const BLOOM_SCENE = 1;
+    const bloomLayer = new THREE.Layers();
+    bloomLayer.set(BLOOM_SCENE);
+    
+
+// photoGroup 默认在 ENTIRE_SCENE（0）即可，不要 enable BLOOM_SCENE
+
+
+    // Postprocessing bloom
+    // ---------------------------
+// Selective Bloom (2 composers)
+// ---------------------------
+    const renderSceneBloom = new RenderPass(scene, camera);
+    const renderSceneFinal = new RenderPass(scene, camera);
+
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(innerWidth, innerHeight),
+      1.7,   // strength
+      0.6,  // radius
+      0.03  // threshold
+    );
+
+    // Bloom composer: only renders bloom layer (we'll darken others during bloom pass)
+    const bloomComposer = new EffectComposer(renderer);
+    bloomComposer.renderToScreen = false;
+    bloomComposer.addPass(renderSceneBloom);
+    bloomComposer.addPass(bloomPass);
+
+    // Final composer: renders full scene + add bloom texture
+    const finalComposer = new EffectComposer(renderer);
+    finalComposer.addPass(renderSceneFinal);
+
+    const finalPass = new ShaderPass(
+      new THREE.ShaderMaterial({
+        uniforms: {
+          baseTexture: { value: null },
+          bloomTexture: { value: bloomComposer.renderTarget2.texture },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D baseTexture;
+          uniform sampler2D bloomTexture;
+          varying vec2 vUv;
+
+          void main() {
+            vec4 base = texture2D(baseTexture, vUv);
+            vec4 bloom = texture2D(bloomTexture, vUv);
+            gl_FragColor = base + bloom; // additive blend
+          }
+        `,
+        defines: {}
+      }),
+      "baseTexture"
+    );
+
+    finalComposer.addPass(finalPass);
+
+
+    // ---------------------------
+    // Helpers: smooth damp
+    // ---------------------------
+    function damp(current, target, lambda, dt){
+      // exponential smoothing
+      return THREE.MathUtils.lerp(current, target, 1 - Math.exp(-lambda * dt));
+    }
+    function dampVec3(v, target, lambda, dt){
+      v.x = damp(v.x, target.x, lambda, dt);
+      v.y = damp(v.y, target.y, lambda, dt);
+      v.z = damp(v.z, target.z, lambda, dt);
+      return v;
+    }
+
+    // ---------------------------
+    // Group root
+    // ---------------------------
+    const root = new THREE.Group();
+    scene.add(root);
+
+    // A subtle ground glow (fake)
+    const groundGeo = new THREE.CircleGeometry(9.5, 80);
+    const groundMat = new THREE.MeshBasicMaterial({ color: new THREE.Color("#07101a"), transparent:true, opacity:0.65 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI/2;
+    ground.position.y = -3.6;
+    root.add(ground);
+
+    // ---------------------------
+    // Particle "tree volume" (shader points)
+    // ---------------------------
+    const PARTICLE_COUNT = 9000;
+
+    const pGeo = new THREE.BufferGeometry();
+    const pPos = new Float32Array(PARTICLE_COUNT * 3);
+    const pCol = new Float32Array(PARTICLE_COUNT * 3);
+    const pSize= new Float32Array(PARTICLE_COUNT);
+
+    // Target buffers for state transitions
+    const pCone = new Float32Array(PARTICLE_COUNT * 3);
+    const pScatter = new Float32Array(PARTICLE_COUNT * 3);
+
+    function sampleCone(i){
+      // cone height range: y in [-3.1, +4.4]
+      const u = Math.pow(Math.random(), 1.6);     // 1.5~2.3 都可，越大越偏底部
+      const y = THREE.MathUtils.lerp(-3.0, 4.2, u);
+      const t = (y + 3.1) / (4.4 + 3.1); // 0..1
+      const radius = (1 - t) * 3.6 + 0.2;
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.pow(Math.random(), 0.55) * radius;
+      const x = Math.cos(a) * r;
+      const z = Math.sin(a) * r;
+      return {x,y,z};
+    }
+    function sampleScatter(){
+      const x = (Math.random()-0.5) * 16;
+      const y = (Math.random()-0.2) * 10;
+      const z = (Math.random()-0.5) * 16;
+      return {x,y,z};
+    }
+
+    for(let i=0;i<PARTICLE_COUNT;i++){
+      const c = sampleCone(i);
+      pPos[i*3+0]=c.x; pPos[i*3+1]=c.y; pPos[i*3+2]=c.z;
+      pCone[i*3+0]=c.x; pCone[i*3+1]=c.y; pCone[i*3+2]=c.z;
+
+      const s = sampleScatter();
+      pScatter[i*3+0]=s.x; pScatter[i*3+1]=s.y; pScatter[i*3+2]=s.z;
+
+      // color: mostly matte green with gold/red sparkles
+      const rnd = Math.random();
+      const col = (rnd < 0.80) ? C_GOLD : (rnd < 0.10) ? C_AMBER : (rnd < 0.05 ? C_RED : C_GREEN);
+      pCol[i*3+0]=col.r; pCol[i*3+1]=col.g; pCol[i*3+2]=col.b;
+      pSize[i]= THREE.MathUtils.lerp(2.0, 12.0, Math.random()**3.5);
+    }
+
+    pGeo.setAttribute("position", new THREE.BufferAttribute(pPos, 3));
+    pGeo.setAttribute("color", new THREE.BufferAttribute(pCol, 3));
+    pGeo.setAttribute("aSize", new THREE.BufferAttribute(pSize, 1));
+
+    const particleMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexColors: true,
+      uniforms: {
+        uTime: { value: 0 },
+        uPixelRatio: { value: renderer.getPixelRatio() },
+        uBaseSize: { value: 1.0 }
+      },
+      vertexShader: `
+        attribute float aSize;
+        varying vec3 vColor;
+        uniform float uTime;
+        uniform float uPixelRatio;
+        uniform float uBaseSize;
+
+        void main(){
+          vColor = color;
+          vec3 p = position;
+
+          // subtle shimmer / drift
+          float t = uTime * 0.6;
+          p.x += sin(t + p.y*0.8) * 0.03;
+          p.z += cos(t + p.x*0.7) * 0.03;
+
+          vec4 mv = modelViewMatrix * vec4(p, 1.0);
+          gl_Position = projectionMatrix * mv;
+
+          // perspective point size
+          float size = aSize * uBaseSize * uPixelRatio;
+          gl_PointSize = size * (1.0 / max(0.7, -mv.z));
+        }
+      `,
+      fragmentShader: `
+        precision highp float;
+        varying vec3 vColor;
+
+        void main(){
+          // soft glowing disc
+          vec2 uv = gl_PointCoord.xy - 0.5;
+          float d = length(uv);
+          float core = smoothstep(0.42, 0.0, d);
+          float halo = smoothstep(0.80, 0.25, d) * 0.95;
+          float alpha = core + halo;
+
+          vec3 col = vColor;
+          // a bit of "metallic" vibe via luminance lift
+          col = mix(col, vec3(1.0), 0.08);
+
+          gl_FragColor = vec4(col, alpha);
+        }
+      `
+    });
+
+    const particlePoints = new THREE.Points(pGeo, particleMat);
+    root.add(particlePoints);
+
+    // Star topper
+    const star = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.45, 0),
+      new THREE.MeshStandardMaterial({
+        color: C_GOLD, emissive: new THREE.Color("#ffe29a"), emissiveIntensity: 1.4,
+        roughness: 0.15, metalness: 0.95
+      })
+    );
+    star.position.set(0, 4.9, 0);
+    root.add(star);
+
+    // particles + star + ornaments should bloom
+    particlePoints.layers.enable(BLOOM_SCENE);
+    star.layers.enable(BLOOM_SCENE);
+    
+
+    // ---------------------------
+    // Ornaments / cubes / candy canes (Instanced)
+    // ---------------------------
+    const ORN_COUNT = 260;
+
+    const sphereGeo = new THREE.SphereGeometry(0.12, 18, 18);
+    const cubeGeo   = new THREE.BoxGeometry(0.18, 0.18, 0.18);
+    const candyGeo  = new THREE.CylinderGeometry(0.06, 0.06, 0.44, 16);
+
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: C_GOLD, roughness: 0.28, metalness: 0.95,
+      emissive: new THREE.Color("#2a1d05"), emissiveIntensity: 0.75
+    });
+    const redMat = new THREE.MeshStandardMaterial({
+      color: C_RED, roughness: 0.45, metalness: 0.65,
+      emissive: new THREE.Color("#1a0407"), emissiveIntensity: 0.55
+    });
+    const greenMat = new THREE.MeshStandardMaterial({
+      color: C_GREEN, roughness: 0.62, metalness: 0.20,
+      emissive: new THREE.Color("#02110b"), emissiveIntensity: 0.65
+    });
+
+    const spheres = new THREE.InstancedMesh(sphereGeo, goldMat, ORN_COUNT);
+    const cubes   = new THREE.InstancedMesh(cubeGeo, redMat, ORN_COUNT);
+    const candies = new THREE.InstancedMesh(candyGeo, greenMat, ORN_COUNT);
+
+    spheres.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    cubes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    candies.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+    root.add(spheres, cubes, candies);
+    // ornaments should bloom (after they are created)
+    spheres.layers.enable(BLOOM_SCENE);
+    cubes.layers.enable(BLOOM_SCENE);
+    candies.layers.enable(BLOOM_SCENE);
+
+    // per-instance positions for cone/scatter
+    const ornCone = Array.from({length: ORN_COUNT}, ()=> new THREE.Vector3());
+    const ornScatter = Array.from({length: ORN_COUNT}, ()=> new THREE.Vector3());
+    const ornPos = Array.from({length: ORN_COUNT}, ()=> new THREE.Vector3());
+    const ornRot = Array.from({length: ORN_COUNT}, ()=> new THREE.Euler());
+    const ornScale = Array.from({length: ORN_COUNT}, ()=> new THREE.Vector3(1,1,1));
+
+    function sampleOrnCone(){
+      const y = THREE.MathUtils.lerp(-3.0, 4.2, Math.random());
+      const t = (y + 3.0) / (4.2 + 3.0);
+      // t: 0(底部) -> 1(顶部)
+      // 顶部保留更少：t 越大，通过概率越低
+      if (Math.random() < t * 0.65) return sampleOrnCone();
+
+      const radius = (1 - t) * 3.1 + 0.15;
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.pow(Math.random(), 0.55) * radius;
+      return new THREE.Vector3(Math.cos(a)*r, y, Math.sin(a)*r);
+    }
+    function sampleOrnScatter(){
+      return new THREE.Vector3(
+        (Math.random()-0.5)*14,
+        (Math.random()-0.15)*9,
+        (Math.random()-0.5)*14
+      );
+    }
+    for(let i=0;i<ORN_COUNT;i++){
+      ornCone[i].copy(sampleOrnCone());
+      ornScatter[i].copy(sampleOrnScatter());
+      ornPos[i].copy(ornCone[i]);
+      ornRot[i].set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+      const s = THREE.MathUtils.lerp(0.8, 1.6, Math.random());
+      ornScale[i].set(s,s,s);
+    }
+
+    const tmpM = new THREE.Matrix4();
+    const tmpQ = new THREE.Quaternion();
+    const tmpS = new THREE.Vector3();
+    const tmpP = new THREE.Vector3();
+
+    function updateInstancedMeshes(){
+      for(let i=0;i<ORN_COUNT;i++){
+        tmpP.copy(ornPos[i]);
+        tmpQ.setFromEuler(ornRot[i]);
+        tmpS.copy(ornScale[i]);
+
+        tmpM.compose(tmpP, tmpQ, tmpS);
+        spheres.setMatrixAt(i, tmpM);
+
+        tmpM.compose(tmpP.clone().addScaledVector(new THREE.Vector3(0.15,0.0,0.15), Math.sin(i)), tmpQ, tmpS);
+        cubes.setMatrixAt(i, tmpM);
+
+        // candies: slightly taller and rotated
+        const q2 = new THREE.Quaternion().setFromEuler(new THREE.Euler(ornRot[i].x, ornRot[i].y, ornRot[i].z + Math.PI/2));
+        tmpM.compose(tmpP.clone().add(new THREE.Vector3(0.0, 0.12, 0.0)), q2, tmpS.clone().multiplyScalar(1.0));
+        candies.setMatrixAt(i, tmpM);
+      }
+      spheres.instanceMatrix.needsUpdate = true;
+      cubes.instanceMatrix.needsUpdate = true;
+      candies.instanceMatrix.needsUpdate = true;
+    }
+    updateInstancedMeshes();
+
+    // ---------------------------
+    // Photo cloud (uploaded images)
+    // ---------------------------
+    const photoGroup = new THREE.Group();
+    root.add(photoGroup);
+
+    const photoPlanes = []; // {mesh, conePos, scatterPos, baseScale, focused:boolean}
+    const loader = new THREE.TextureLoader();
+
+    function makePhotoPlane(texture){
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+      // const mat = new THREE.MeshStandardMaterial({
+      //   map: texture,
+      //   transparent: true,
+      //   opacity: 0.98,
+      //   roughness: 0.35,
+      //   metalness: 0.08,
+      //   emissive: new THREE.Color("#2a3345"),
+      //   emissiveIntensity: 0.35,
+      //   side: THREE.DoubleSide,
+      // });
+      const mat = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        opacity: 1.0,
+        side: THREE.DoubleSide,
+      });
+      const aspect = texture.image ? (texture.image.width / texture.image.height) : 1.0;
+      const h = 0.9;
+      const w = h * aspect;
+      const geo = new THREE.PlaneGeometry(w, h, 1, 1);
+      geo.scale(-1, 1, 1);   // ← 强制把图片左右翻回来
+      const mesh = new THREE.Mesh(geo, mat);
+
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.userData.isPhoto = true;
+      // subtle edge glow using second plane outline
+      const outline = new THREE.Mesh(
+        new THREE.PlaneGeometry(w*1.04, h*1.04),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color("#fff2cf"), transparent:true, opacity:0.10,side: THREE.DoubleSide, })
+      );
+      outline.position.z = -0.01;
+      mesh.add(outline);
+
+      return mesh;
+    }
+
+
+    // ---------------------------
+    // Default photos (preloaded)
+    // ---------------------------
+    const DEFAULT_PHOTOS = [
+      "/assets/photos/p1.jpg",
+      "/assets/photos/p2.jpg",
+      "/assets/photos/p3.jpg",
+      "/assets/photos/p4.jpg",
+      "/assets/photos/p5.jpg",
+      "/assets/photos/p6.jpg",
+      "/assets/photos/p7.jpg",
+      "/assets/photos/p8.jpg",
+      "/assets/photos/p9.jpg",
+      "/assets/photos/p10.jpg",
+      "/assets/photos/p11.jpg",
+      "/assets/photos/p12.jpg",
+      "/assets/photos/p13.jpg",
+      "/assets/photos/p14.jpg",
+      "/assets/photos/p15.jpg",
+      "/assets/photos/p16.jpg",
+      "/assets/photos/p17.jpg",
+      "/assets/photos/p18.jpg",
+      "/assets/photos/p19.jpg",
+      "/assets/photos/p20.jpg",
+      "/assets/photos/p21.jpg",
+      "/assets/photos/p22.jpg",
+      "/assets/photos/p23.jpg",
+      "/assets/photos/p24.jpg",
+      "/assets/photos/p25.jpg",
+    ];
+
+    function addDefaultPhotos(){
+      DEFAULT_PHOTOS.forEach((url)=>{
+        loader.load(url, (tex)=>{
+          const mesh = makePhotoPlane(tex);
+
+          const conePos = sampleOrnCone().multiplyScalar(0.92);
+          const scatterPos = sampleOrnScatter();
+
+          mesh.position.copy(conePos);
+          mesh.rotation.set(0, Math.random()*Math.PI*2, 0);
+          mesh.scale.setScalar(0.75);
+
+          photoGroup.add(mesh);
+          photoPlanes.push({
+            mesh,
+            conePos,
+            scatterPos,
+            baseScale: mesh.scale.x,
+            focused: false,
+          });
+
+          photoText.textContent = String(photoPlanes.length);
+        });
+      });
+    }
+
+
+    function addPhotosFromFiles(files){
+      const arr = Array.from(files);
+      arr.forEach(file=>{
+        const url = URL.createObjectURL(file);
+        loader.load(url, tex=>{
+          const mesh = makePhotoPlane(tex);
+
+          const conePos = sampleOrnCone().multiplyScalar(0.92);
+          const scatterPos = sampleOrnScatter();
+
+          mesh.position.copy(conePos);
+          mesh.rotation.set(0, Math.random()*Math.PI*2, 0);
+          mesh.scale.setScalar(0.75);
+
+          photoGroup.add(mesh);
+          photoPlanes.push({
+            mesh,
+            conePos,
+            scatterPos,
+            baseScale: mesh.scale.x,
+            focused: false,
+          });
+
+          photoText.textContent = String(photoPlanes.length);
+        });
+      });
+    }
+
+    photoInput.addEventListener("change", (e)=>{
+      if(e.target.files?.length) addPhotosFromFiles(e.target.files);
+      e.target.value = "";
+    });
+
+    // ---------------------------
+    // State machine
+    // ---------------------------
+    const State = {
+      CONE: "CONE",
+      SCATTER: "SCATTER",
+      FOCUS: "FOCUS",
+    };
+    let state = State.CONE;
+
+    function setState(next){
+      if(state === next) return;
+      state = next;
+      stateText.textContent = state;
+    }
+
+    // Photo focus tracking
+    let focusedPhoto = null; // {index, mesh}
+    let focusHold = 0;
+
+    // ---------------------------
+    // Camera orbit control (gesture-driven)
+    // ---------------------------
+    const camTarget = new THREE.Vector3(0, 1.0, 0);
+    let yaw = 0;
+    let pitch = -0.12;
+    let yawT = 0;
+    let pitchT = -0.12;
+    let camDist = 14;
+    let camDistT = 14;
+
+    function applyCamera(dt){
+      yaw = damp(yaw, yawT, 6.5, dt);
+      pitch = damp(pitch, pitchT, 6.5, dt);
+      camDist = damp(camDist, camDistT, 6.5, dt);
+
+      const cp = Math.cos(pitch), sp = Math.sin(pitch);
+      const cy = Math.cos(yaw), sy = Math.sin(yaw);
+
+      camera.position.set(
+        camTarget.x + camDist * cp * sy,
+        camTarget.y + camDist * sp,
+        camTarget.z + camDist * cp * cy
+      );
+      camera.lookAt(camTarget);
+    }
+
+    // ---------------------------
+    // Hand tracking (MediaPipe Hands)
+    // ---------------------------
+    let hands = null;
+    let cam = null;
+    let handOn = false;
+
+    // Simple gesture metrics
+    const handData = {
+      open: false,
+      fist: false,
+      pinch: false,
+      centerNdc: new THREE.Vector2(0,0),
+      rotHint: new THREE.Vector2(0,0), // -1..1
+      pinchNdc: new THREE.Vector2(0,0),
+      confidence: 0
+    };
+
+    function dist2(a,b){
+      const dx=a.x-b.x, dy=a.y-b.y;
+      return Math.sqrt(dx*dx+dy*dy);
+    }
+
+    function computeGestures(landmarks){
+      // landmarks in normalized image coords (0..1)
+      // indices: wrist 0; thumb tip 4; index tip 8; middle tip 12; ring tip 16; pinky tip 20
+      const wrist = landmarks[0];
+      const thumbTip = landmarks[4];
+      const indexTip = landmarks[8];
+      const midTip = landmarks[12];
+      const ringTip = landmarks[16];
+      const pinkyTip= landmarks[20];
+
+      const indexMcp = landmarks[5];
+      const midMcp = landmarks[9];
+      const ringMcp = landmarks[13];
+      const pinkyMcp= landmarks[17];
+
+      const fingerTips = [indexTip, midTip, ringTip, pinkyTip];
+      const fingerMcps = [indexMcp, midMcp, ringMcp, pinkyMcp];
+
+      // "open" if tips far from wrist and also far from their MCPs
+      let extended = 0;
+      for(let i=0;i<4;i++){
+        const dTipW = dist2(fingerTips[i], wrist);
+        const dMcpW = dist2(fingerMcps[i], wrist);
+        if(dTipW > dMcpW * 1.15) extended++;
+      }
+      // thumb extension (rough)
+      const thumbExtended = dist2(thumbTip, wrist) > dist2(landmarks[2], wrist) * 1.05 ? 1 : 0;
+
+      const open = (extended >= 3 && thumbExtended === 1);
+      const fist = (extended <= 1 && dist2(indexTip, wrist) < dist2(indexMcp, wrist) * 1.02);
+
+      // ==========================================================
+      // pinch (stable): normalize by hand size + EMA + debounce
+      // ==========================================================
+      const pinchD = dist2(thumbTip, indexTip);
+
+      // 用手的“尺度”归一化：抵抗手远近变化
+      // wrist -> midMcp 是很稳定的参考长度
+      const handScale = Math.max(0.04, dist2(wrist, midMcp));
+      const pinchN = pinchD / handScale; // normalized pinch distance
+
+      // EMA 平滑，减少抖动
+      handData._pinchN ??= pinchN;
+      handData._pinchN = handData._pinchN * 0.7 + pinchN * 0.3;
+
+      // 归一化阈值（你可微调）
+      const PINCH_START = 0.42; // 越大越容易触发
+      const PINCH_END   = 0.55; // 越大越不容易松开
+
+      // hysteresis: start tighter, release looser
+      const wantPinch = handData.pinch
+        ? (handData._pinchN < PINCH_END)
+        : (handData._pinchN < PINCH_START);
+
+      // debounce: 连续几帧才算“真的捏住”
+      handData._pinchFrames ??= 0;
+      handData._pinchFrames = wantPinch
+        ? Math.min(6, handData._pinchFrames + 1)
+        : 0;
+
+      handData.pinch = handData._pinchFrames >= 3;
+      // ==========================================================
+
+      // center (wrist + midMcp)
+      const cx = (wrist.x + midMcp.x) * 0.5;
+      const cy = (wrist.y + midMcp.y) * 0.5;
+
+      // convert to NDC (-1..1), remember video is mirrored in UI but mediapipe uses real coords
+      // We'll mirror x to feel natural for user facing camera.
+      const ndcX = (1.0 - cx) * 2.0 - 1.0;
+      // const ndcX = cx * 2.0 - 1.0;
+      const ndcY = -(cy * 2.0 - 1.0);
+
+      // pinch point NDC (use index tip)
+      const pnx = (1.0 - indexTip.x) * 2.0 - 1.0;
+      // const pnx = indexTip.x * 2.0 - 1.0;
+      const pny = -(indexTip.y * 2.0 - 1.0);
+
+      // rotation hint: relative to center (small movement)
+      const rx = THREE.MathUtils.clamp((ndcX) * 0.9, -1, 1);
+      const ry = THREE.MathUtils.clamp((ndcY) * 0.9, -1, 1);
+
+      handData.open = open;
+      handData.fist = fist;
+      handData.centerNdc.set(ndcX, ndcY);
+      handData.rotHint.set(rx, ry);
+      handData.pinchNdc.set(pnx, pny);
+      handData.confidence = 1;
+    }
+
+
+    async function enableHands(){
+      if(handOn) return;
+      handText.textContent = "INIT";
+      hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.65,
+        minTrackingConfidence: 0.65
+      });
+
+      hands.onResults((results)=>{
+        if(results.multiHandLandmarks && results.multiHandLandmarks.length){
+          computeGestures(results.multiHandLandmarks[0]);
+          handText.textContent = handData.pinch ? "PINCH" : (handData.open ? "OPEN" : (handData.fist ? "FIST" : "TRACK"));
+        }else{
+          handData.open = handData.fist = handData.pinch = false;
+          handData.confidence = 0;
+          handText.textContent = "NO";
+        }
+      });
+
+      // Camera feed
+      try{
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio:false });
+        video.srcObject = stream;
+        await video.play();
+      }catch(err){
+        handText.textContent = "DENIED";
+        console.warn(err);
+        return;
+      }
+
+      cam = new Camera(video, {
+        onFrame: async () => {
+          await hands.send({ image: video });
+        },
+        width: 640,
+        height: 480
+      });
+      cam.start();
+
+      handOn = true;
+      handText.textContent = "ON";
+    }
+
+    function disableHands(){
+      if(!handOn) return;
+      try{
+        if(cam) cam.stop();
+        if(video.srcObject){
+          video.srcObject.getTracks().forEach(t=>t.stop());
+        }
+      }catch(e){}
+      cam = null;
+      hands = null;
+      handOn = false;
+      handText.textContent = "OFF";
+    }
+
+    toggleCamBtn.addEventListener("click", ()=>{
+      if(handOn){
+        disableHands();
+        bgm.pause();
+      }else{
+        enableHands();
+        bgm.volume = 0.35;   // background music volume
+        bgm.play().catch(()=>{});
+      }
+    });
+
+    togglePreviewBtn.addEventListener("click", ()=>{
+      video.style.display = (video.style.display === "none" || video.style.display === "") ? "block" : "none";
+    });
+
+    resetBtn.addEventListener("click", ()=>{
+      focusedPhoto = null;
+      focusHold = 0;
+      setState(State.CONE);
+
+    addDefaultPhotos();
+      yawT = 0; pitchT = -0.12; camDistT = 14;
+    });
+
+    // ---------------------------
+    // Picking photos (pinch)
+    // ---------------------------
+    const raycaster = new THREE.Raycaster();
+    function pickPhotoByNDC(ndc){
+      if(photoPlanes.length === 0) return null;
+
+      // 1) 先试 raycaster（精确命中）
+      raycaster.setFromCamera(ndc, camera);
+      const hits = raycaster.intersectObjects(photoGroup.children, true);
+      const hit = hits.find(h => h.object?.userData?.isPhoto || h.object?.parent?.userData?.isPhoto);
+      if(hit){
+        const obj = hit.object.userData.isPhoto ? hit.object : hit.object.parent;
+        const idx = photoPlanes.findIndex(p => p.mesh === obj);
+        if(idx >= 0) return { idx, mesh: obj };
+      }
+
+      // 2) 没命中就用屏幕空间“吸附”：选投影点最近的照片
+      const R = 0.14; // 命中半径（NDC），建议 0.10~0.18
+      let best = null;
+      let bestD2 = R*R;
+
+      for(let i=0;i<photoPlanes.length;i++){
+        const m = photoPlanes[i].mesh;
+        const p = m.getWorldPosition(new THREE.Vector3()).project(camera); // NDC
+        const dx = p.x - ndc.x;
+        const dy = p.y - ndc.y;
+        const d2 = dx*dx + dy*dy;
+        if(d2 < bestD2){
+          bestD2 = d2;
+          best = { idx:i, mesh:m };
+        }
+      }
+      return best;
+    }
+
+
+        // ---------------------------
+        // Transition targets
+        // ---------------------------
+        let targetPosBuffer = pCone; // for particles
+        let uBaseSizeT = 1.0;
+
+        function applyStateTargets(){
+          if(state === State.CONE){
+            targetPosBuffer = pCone;
+            uBaseSizeT = 1.0;
+          }else if(state === State.SCATTER){
+            targetPosBuffer = pScatter;
+            uBaseSizeT = 1.15;
+          }else if(state === State.FOCUS){
+            targetPosBuffer = pScatter;
+            uBaseSizeT = 1.05;
+          }
+        }
+    
+    // ---------------------------
+// Selective bloom helpers
+// ---------------------------
+    const darkMaterial = new THREE.MeshBasicMaterial({ color: "black" });
+    const materials = new Map();
+
+    function darkenNonBloomed(obj) {
+      // 只处理 Mesh / InstancedMesh（Points 不需要）
+      if ((obj.isMesh || obj.isInstancedMesh) && bloomLayer.test(obj.layers) === false) {
+        materials.set(obj.uuid, obj.material);
+        obj.material = darkMaterial;
+      }
+    }
+
+    function restoreMaterial(obj) {
+      if (materials.has(obj.uuid)) {
+        obj.material = materials.get(obj.uuid);
+        materials.delete(obj.uuid);
+      }
+    }
+
+    function renderBloom() {
+      const oldMask = camera.layers.mask;
+
+      camera.layers.set(BLOOM_SCENE);
+      bloomComposer.render();
+
+      camera.layers.mask = oldMask;
+    }
+
+    // ---------------------------
+    // Animate
+    // ---------------------------
+    let last = performance.now();
+    function tick(now){
+      const dt = Math.min(0.033, (now-last)/1000);
+      last = now;
+
+      // time
+      particleMat.uniforms.uTime.value = now * 0.001;
+
+      // gesture -> state changes
+      if(handOn && handData.confidence > 0){
+        // base state switching
+        if(handData.fist){
+          focusedPhoto = null;
+          focusHold = 0;
+          setState(State.CONE);
+        }else if(handData.open){
+          if(state !== State.FOCUS) setState(State.SCATTER);
+        }
+
+        // camera rotation in scatter/focus
+        if(state === State.SCATTER || state === State.FOCUS){
+          // map hand movement to yaw/pitch target
+          yawT   = damp(yawT, yawT + handData.rotHint.x * 0.035, 10, dt);
+          pitchT = THREE.MathUtils.clamp(damp(pitchT, pitchT + handData.rotHint.y * 0.020, 10, dt), -0.55, 0.20);
+        }
+
+        // pinch -> focus photo
+        if(handData.pinch && (state === State.SCATTER || state === State.FOCUS)){
+          // small hold to avoid false triggers
+          focusHold += dt;
+          if(focusHold > 0.08 && !focusedPhoto){
+            const pick = pickPhotoByNDC(handData.pinchNdc);
+            console.log("focusHold", focusHold.toFixed(3), "ndc", handData.pinchNdc.x.toFixed(2), handData.pinchNdc.y.toFixed(2), "pick", !!pick);
+            if(pick){
+              focusedPhoto = pick;
+              setState(State.FOCUS);
+              //camDistT = 10.8;
+            }
+          }
+        }else{
+          // release pinch -> back to scatter (if was focusing)
+          focusHold = Math.max(0, focusHold - dt*3);
+          if(state === State.FOCUS){
+            setState(State.SCATTER);
+            focusedPhoto = null;
+            //camDistT = 14;
+          }
+        }
+      }
+
+      applyStateTargets();
+
+      // particles: move current position toward target buffer
+      const posAttr = pGeo.getAttribute("position");
+      const arr = posAttr.array;
+      for(let i=0;i<PARTICLE_COUNT;i++){
+        const ix = i*3;
+        const tx = targetPosBuffer[ix+0];
+        const ty = targetPosBuffer[ix+1];
+        const tz = targetPosBuffer[ix+2];
+
+        // faster in transitions for "snappy cinematic"
+        arr[ix+0] = damp(arr[ix+0], tx, 4.6, dt);
+        arr[ix+1] = damp(arr[ix+1], ty, 4.6, dt);
+        arr[ix+2] = damp(arr[ix+2], tz, 4.6, dt);
+      }
+      posAttr.needsUpdate = true;
+
+      // particle size base
+      particleMat.uniforms.uBaseSize.value = damp(particleMat.uniforms.uBaseSize.value, uBaseSizeT, 4.8, dt);
+
+      // ornaments: lerp between cone/scatter
+      for(let i=0;i<ORN_COUNT;i++){
+        const target = (state === State.CONE) ? ornCone[i] : ornScatter[i];
+        dampVec3(ornPos[i], target, 3.8, dt);
+
+        // slow spin in scatter
+        if(state !== State.CONE){
+          ornRot[i].x += dt * 0.25;
+          ornRot[i].y += dt * 0.32;
+          ornRot[i].z += dt * 0.18;
+        }else{
+          // calm
+          ornRot[i].x = damp(ornRot[i].x, 0, 2.2, dt);
+          ornRot[i].y += dt * 0.08;
+          ornRot[i].z = damp(ornRot[i].z, 0, 2.2, dt);
+        }
+      }
+      updateInstancedMeshes();
+
+      // photos: cone/scatter + focus
+      for(let i=0;i<photoPlanes.length;i++){
+        const p = photoPlanes[i];
+        const mesh = p.mesh;
+        const baseTarget = (state === State.CONE) ? p.conePos : p.scatterPos;
+
+        // face camera a bit (billboard-ish)
+        const targetQuat = new THREE.Quaternion().setFromRotationMatrix(
+          new THREE.Matrix4().lookAt(mesh.position, camera.position, new THREE.Vector3(0,1,0))
+        );
+
+        // default movement
+        const tgt = baseTarget.clone();
+
+        // focus behavior
+        if(state === State.FOCUS && focusedPhoto && focusedPhoto.idx === i){
+          // bring to front-center
+          const dir = new THREE.Vector3();
+          camera.getWorldDirection(dir);          // 相机正前方
+          tgt.copy(camera.position).add(dir.multiplyScalar(6.0));
+          tgt.y += 0.9;                            // 你想要略微上移就保留
+
+
+          //mesh.material.emissiveIntensity = damp(mesh.material.emissiveIntensity, 0.9, 6.0, dt);
+          mesh.material.opacity = damp(mesh.material.opacity, 1.0, 6.0, dt);
+          const s = damp(mesh.scale.x, 2.2, 7.0, dt);
+          mesh.scale.setScalar(s);
+        }else{
+          //mesh.material.emissiveIntensity = damp(mesh.material.emissiveIntensity, 0.35, 4.0, dt);
+          mesh.material.opacity = damp(mesh.material.opacity, 1.0, 4.0, dt);
+          const s = damp(mesh.scale.x, p.baseScale, 4.8, dt);
+          mesh.scale.setScalar(s);
+        }
+
+        dampVec3(mesh.position, tgt, 3.8, dt);
+        mesh.quaternion.slerp(targetQuat, 0.08);
+      }
+
+      // star subtle bob
+      star.position.y = 4.9 + Math.sin(now*0.0012)*0.06;
+      star.rotation.y += dt * 0.55;
+
+      // camera apply
+      applyCamera(dt);
+
+      // render (selective bloom)
+      renderBloom();
+      finalComposer.render();
+
+
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+
+    // ---------------------------
+    // Resize
+    // ---------------------------
+    addEventListener("resize", ()=>{
+      camera.aspect = innerWidth/innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+      bloomComposer.setSize(innerWidth, innerHeight);
+      finalComposer.setSize(innerWidth, innerHeight);
+      bloomPass.setSize(innerWidth, innerHeight);
+      particleMat.uniforms.uPixelRatio.value = renderer.getPixelRatio();
+    });
+
+    // initial state
+    setState(State.CONE);
+    // DEBUG
+    console.log(">>> CALL addDefaultPhotos");
+
+    // preload default photos
+    addDefaultPhotos();
+
+    // Optional: add a few placeholder "photos" if you want.
+    // (留空：你上传照片后自动生成)
+  </script>
+</body>
+</html>
